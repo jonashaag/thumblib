@@ -5,18 +5,22 @@ try:
 except ImportError:
     import Image
 
-_RESULT_EXTENSIONS = {
+PROPOSED_FORMATS = {
     'png' : set(['svg', 'gif', 'png', 'bmp', 'pnm', 'pdf'])
 }
 
-def lookup_extension(original_extension):
-    original_extension = original_extension.lower()
-    for ext, original_exts in _RESULT_EXTENSIONS.iteritems():
-        if original_extension in original_exts:
-            return ext
+def normalize_extension(ext):
+    return str(ext).lstrip('.').lower()
+
+def recommend_thumbnail_format(image_format):
+    image_format = normalize_extension(image_format)
+    for recommended_format, source_formats in PROPOSED_FORMATS.iteritems():
+        if image_format in source_formats:
+            return recommended_format
+    # fallback to jpg if no better solution could be found
     return 'jpg'
 
-def autosize(image, max_width, max_height, digits=None):
+def autosize(image, max_width, max_height, digits=None, as_int=False):
     """
     Returns a tuple (width, height) chosen intelligently so that the
     maximum values (given in ``max_width`` and ``max_height``)
@@ -55,18 +59,25 @@ def autosize(image, max_width, max_height, digits=None):
     else:
         w, h = max_width, height / widths_ratio
 
-    if digits is not None:
+    if as_int:
+        assert digits is None, "`digits` can't be set if `as_int` is True"
+        w = int(round(w, 0))
+        h = int(round(h, 0))
+
+    elif digits is not None:
         w, h = round(w, digits), round(h, digits)
 
     return w, h
 
 def thumbnail(original_file, result_file, max_width=None, max_height=None):
     image = Image.open(original_file)
-    width_height = autosize(image, max_width, max_height)
+    width_height = autosize(image, max_width, max_height, as_int=True)
     if width_height == image.size:
         return original_file
 
-    result_file += lookup_extension(os.path.splitext(original_file)[1])
+    result_file += recommend_thumbnail_format(
+        os.path.splitext(original_file)[1]
+    )
 
     thumb = image.resize(width_height)
     try:
@@ -75,6 +86,5 @@ def thumbnail(original_file, result_file, max_width=None, max_height=None):
         # only images under a certain size can be optimized.
         # If they can't an exception will be raised (I could not figure out
         # _which_ exception, hence the "except:".
-        # --> save without optimization
-        thumb.save(result_file)
+        thumb.save(result_file) # try to save without optimization
     return result_file
