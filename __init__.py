@@ -1,78 +1,81 @@
-from __future__ import division
+import re
 import os
-import tinymagick
+import subprocess
 
-
+UNESCAPED_QUOTES_RE = re.compile(r'([^\\]("|\'))')
 PROPOSED_FORMATS = {
     'png' : set(['svg', 'gif', 'png', 'bmp', 'pnm', 'pdf'])
 }
 
-def normalize_extension(ext):
+class ExecutionError(Exception):
+    """ Raised if a ImageMagick command returns an exit code other than 0. """
+    def __init__(self, commandline, process):
+        Exception.__init__( self,
+            '%r exited with code %d (command line was %r)' %
+                (commandline[0], process.returncode, ' '.join(commandline))
+        )
+
+def _normalize_extension(ext):
     return str(ext).lstrip('.').lower()
 
-def recommend_thumbnail_format(image_format):
-    image_format = normalize_extension(image_format)
+def _recommend_thumbnail_format(image_format):
+    image_format = _normalize_extension(image_format)
     for recommended_format, source_formats in PROPOSED_FORMATS.iteritems():
         if image_format in source_formats:
             return recommended_format
     # fallback to jpg if no better solution could be found
     return 'jpg'
 
-def autosize(image, max_width, max_height, digits=None, as_int=False):
-    """
-    Returns a tuple (width, height) chosen intelligently so that the
-    maximum values (given in ``max_width`` and ``max_height``)
-    are respected and the aspect ratio is preserved.
+def _run_cmd(*cmdline, **kwargs):
+    kwargs.setdefault('stderr', subprocess.PIPE)
+    proc = subprocess.Popen(cmdline, **kwargs)
+    if proc.wait() != 0:
+        print proc.stderr.read()
+        raise ExecutionError(cmdline, proc)
 
-    :param image: The original ``tinymagick.Image``
-    :param int digits: Number of digits the resulting `width` and `height` shall
-                       be rounded to (or ``-1`` if no rounding shall be done)
+    return proc
 
-    (This function is completely stolen from stupFF, which is BSD licensed and
-     can be found at http://github.com/jonashaag/stupff.)
-    """
-    # The following code could be expressed in about two lines, but I think
-    # readability is much more important than performance/elegance here.
-    aspect_ratio = image.width / image.height
+def generate_thumbnail(original_filename, result_filename, dimensions):
+    _run_cmd('convert', '-thumbnail', dimensions,
+             original_filename, result_filename)
 
-    # calculate the ratio of the image and would-be heights and widths
-    # and go on with the highest of the both.
-    if max_height and image.height >= max_height:
-        heights_ratio = image.height / max_height
-    else:
-        heights_ratio = None
-    if max_width and image.width >= max_width:
-        widths_ratio = image.width / max_width
-    else:
-        widths_ratio = None
-
-    if heights_ratio is widths_ratio is None:
-        # do nothing. no maximums given that would matter in any way
-        return (image.width, image.height)
-
-    if heights_ratio > widths_ratio:
-        h, w = max_height, image.width / heights_ratio
-    else:
-        w, h = max_width, image.height / widths_ratio
-
-    if as_int:
-        assert digits is None, "`digits` can't be set if `as_int` is True"
-        w = int(round(w, 0))
-        h = int(round(h, 0))
-
-    elif digits is not None:
-        w, h = round(w, digits), round(h, digits)
-
-    return w, h
-
-def thumbnail(original_file, result_file, max_width=None, max_height=None):
-    image = tinymagick.Image(original_file)
-    width, height = autosize(image, max_width, max_height, as_int=True)
-    if (width, height) == (image.width, image.height):
-        return original_file
-
-    result_file += recommend_thumbnail_format(
-        os.path.splitext(original_file)[1]
+def add_caption(original_filename, result_filename, dimensions, caption):
+    if UNESCAPED_QUOTES_RE.search(caption['text']):
+        raise ValueError("No unescaped quotes in caption['text'] plz")
+    _run_cmd(
+        'convert',
+        '-background', caption.get('background', '#0007'),
+        '-gravity',    caption.get('position', 'South'),
+        '-fill',       caption.get('text-color', 'white'),
+        '-size', dimensions,
+        'caption:%s' % caption['text'],
+        result_filename,
+        '+swap', '-gravity', 'South',
+        '-composite', result_filename
     )
-    image.thumbnail(result_file, width, height)
-    return result_file
+
+def _fmt_dim(width, height, keep_ratio=False):
+    return '%dx%d%s' % (width, height, keep_ratio and '!' or '')
+
+def get_dimensions(image):
+    stdout = _run_cmd('identify', '-format', '%w %h', image,
+                      stdout=subprocess.PIPE).stdout.read()
+    return map(int, stdout.split())
+
+def thumbnail(original_filename, result_filename, width, height,
+              keep_ratio=True, caption=None):
+    result_filename += _recommend_thumbnail_format(
+        os.path.splitext(original_filename)[1]
+    )
+
+    generate_thumbnail(original_filename, result_filename,
+                       _fmt_dim(width, height, keep_ratio))
+
+    if caption is not None:
+        width, height = caption.get('width'), caption.get('height', 13)
+        if width is None:
+            width = get_dimensions(result_filename)[0]
+        dim = _fmt_dim(width, height)
+        add_caption(original_filename, result_filename, dim, caption)
+
+    return result_filename
