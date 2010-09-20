@@ -39,7 +39,7 @@ def generate_thumbnail(original_filename, result_filename, dimensions):
     _run_cmd('convert', '-thumbnail', dimensions,
              original_filename, result_filename)
 
-def add_caption(original_filename, result_filename, caption, keep_ratio):
+def add_caption(image, caption):
     if isinstance(caption, basestring):
         text = caption
         background = position = text_color = width = height = None
@@ -54,7 +54,7 @@ def add_caption(original_filename, result_filename, caption, keep_ratio):
         raise ValueError("No unescaped quotes in caption['text'] plz")
 
     if width is None:
-        width = get_dimensions(result_filename)[0]
+        width = get_dimensions(image)[0]
     if height is None:
         height = 13
 
@@ -63,11 +63,11 @@ def add_caption(original_filename, result_filename, caption, keep_ratio):
         '-background', background or '#0007',
         '-gravity',    position or 'South',
         '-fill',       text_color or 'white',
-        '-size', _fmt_dim(width, height, keep_ratio),
+        '-size',       '%dx%d!' % (width, height),
         'caption:%s' % text,
-        result_filename,
+        image,
         '+swap', '-gravity', 'South',
-        '-composite', result_filename
+        '-composite', image
     )
 
 def _fmt_dim(width, height, keep_ratio=False):
@@ -78,16 +78,10 @@ def get_dimensions(image):
                       stdout=subprocess.PIPE).stdout.read()
     return map(int, stdout.split())
 
-def thumbnail(original_filename, result_filename, width, height,
-              keep_ratio=True, caption=None):
+def thumbnail(original_filename, result_filename, width, height, keep_ratio=True):
     result_filename += _recommend_thumbnail_format(
         os.path.splitext(original_filename)[1]
     )
-
     generate_thumbnail(original_filename, result_filename,
                        _fmt_dim(width, height, keep_ratio))
-
-    if caption is not None:
-        add_caption(original_filename, result_filename, caption, keep_ratio)
-
     return result_filename
