@@ -27,10 +27,10 @@ def _recommend_thumbnail_format(image_format):
     return 'jpg'
 
 def _run_cmd(*cmdline, **kwargs):
-    kwargs.setdefault('stderr', subprocess.PIPE)
+    #kwargs.setdefault('stderr', subprocess.PIPE)
     proc = subprocess.Popen(cmdline, **kwargs)
     if proc.wait() != 0:
-        print proc.stderr.read()
+        #print proc.stderr.read()
         raise ExecutionError(cmdline, proc)
 
     return proc
@@ -39,23 +39,39 @@ def generate_thumbnail(original_filename, result_filename, dimensions):
     _run_cmd('convert', '-thumbnail', dimensions,
              original_filename, result_filename)
 
-def add_caption(original_filename, result_filename, dimensions, caption):
-    if UNESCAPED_QUOTES_RE.search(caption['text']):
+def add_caption(original_filename, result_filename, caption, keep_ratio):
+    if isinstance(caption, basestring):
+        text = caption
+        background = position = text_color = width = height = None
+    else:
+        text = caption['text']
+        background = caption.get('background')
+        position = caption.get('position')
+        text_color = caption.get('text_color')
+        width, height = caption.get('width'), caption.get('height')
+
+    if UNESCAPED_QUOTES_RE.search(text):
         raise ValueError("No unescaped quotes in caption['text'] plz")
+
+    if width is None:
+        width = get_dimensions(result_filename)[0]
+    if height is None:
+        height = 13
+
     _run_cmd(
         'convert',
-        '-background', caption.get('background', '#0007'),
-        '-gravity',    caption.get('position', 'South'),
-        '-fill',       caption.get('text-color', 'white'),
-        '-size', dimensions,
-        'caption:%s' % caption['text'],
+        '-background', background or '#0007',
+        '-gravity',    position or 'South',
+        '-fill',       text_color or 'white',
+        '-size', _fmt_dim(width, height, keep_ratio),
+        'caption:%s' % text,
         result_filename,
         '+swap', '-gravity', 'South',
         '-composite', result_filename
     )
 
 def _fmt_dim(width, height, keep_ratio=False):
-    return '%dx%d%s' % (width, height, keep_ratio and '!' or '')
+    return '%dx%d%s' % (width, height, '!' if not keep_ratio else '')
 
 def get_dimensions(image):
     stdout = _run_cmd('identify', '-format', '%w %h', image,
@@ -72,10 +88,6 @@ def thumbnail(original_filename, result_filename, width, height,
                        _fmt_dim(width, height, keep_ratio))
 
     if caption is not None:
-        width, height = caption.get('width'), caption.get('height', 13)
-        if width is None:
-            width = get_dimensions(result_filename)[0]
-        dim = _fmt_dim(width, height)
-        add_caption(original_filename, result_filename, dim, caption)
+        add_caption(original_filename, result_filename, caption, keep_ratio)
 
     return result_filename
